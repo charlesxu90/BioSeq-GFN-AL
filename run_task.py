@@ -1,5 +1,6 @@
 import argparse
 import gzip
+import os
 import pickle
 import itertools
 import time
@@ -25,15 +26,17 @@ parser.add_argument("--save_path", default='results/test_mlp.pkl.gz')
 parser.add_argument("--tb_log_dir", default='results/test_mlp')
 parser.add_argument("--name", default='test_mlp')
 parser.add_argument("--load_scores_path", default='.')
+parser.add_argument("--device", default='cuda:0')
 
 # Multi-round
-parser.add_argument("--num_rounds", default=15, type=int)
-parser.add_argument("--task", default="amp", type=str)
-parser.add_argument("--num_sampled_per_round", default=256*4, type=int) # 10k
-parser.add_argument("--num_folds", default=5)
-parser.add_argument("--vocab_size", default=21)
-parser.add_argument("--max_len", default=65)
-parser.add_argument("--gen_max_len", default=50+1)
+parser.add_argument("--num_rounds", default=1, type=int)
+parser.add_argument("--task", default="tfbind", type=str)
+parser.add_argument("--num_sampled_per_round", default=128, type=int)
+parser.add_argument("--num_folds", default=5, type=int)  # same to num_round?
+parser.add_argument("--num_round", default=100, type=int)  # difference between num_rounds & num_round
+parser.add_argument("--vocab_size", default=4, type=int)
+parser.add_argument("--max_len", default=8, type=int)
+parser.add_argument("--gen_max_len", default=8, type=int)
 parser.add_argument("--proxy_uncertainty", default="dropout")
 parser.add_argument("--save_scores_path", default=".")
 parser.add_argument("--save_scores", action="store_true")
@@ -50,35 +53,33 @@ parser.add_argument("--load_proxy_weights", type=str)
 parser.add_argument("--max_percentile", default=80, type=int)
 parser.add_argument("--filter_threshold", default=0.1, type=float)
 parser.add_argument("--filter_distance_type", default="edit", type=str)
-parser.add_argument("--oracle_split", default="D2_target", type=str)
+# Proxy params
 parser.add_argument("--proxy_data_split", default="D1", type=str)
-parser.add_argument("--oracle_type", default="MLP", type=str)
-parser.add_argument("--oracle_features", default="AlBert", type=str)
+
 parser.add_argument("--medoid_oracle_dist", default="edit", type=str)
-parser.add_argument("--medoid_oracle_norm", default=1, type=int)
 parser.add_argument("--medoid_oracle_exp_constant", default=6, type=int)
 
 
 # Generator
-parser.add_argument("--gen_learning_rate", default=1e-4, type=float)
+parser.add_argument("--gen_learning_rate", default=5e-4, type=float)
 parser.add_argument("--gen_Z_learning_rate", default=5e-3, type=float)
 parser.add_argument("--gen_clip", default=10, type=float)
-parser.add_argument("--gen_num_iterations", default=20000, type=int) # Maybe this is too low?
+parser.add_argument("--gen_num_iterations", default=10000, type=int)
 parser.add_argument("--gen_episodes_per_step", default=16, type=int)
 parser.add_argument("--gen_num_hidden", default=128, type=int)
 parser.add_argument("--gen_reward_norm", default=1, type=float)
-parser.add_argument("--gen_reward_exp", default=8, type=float)
-parser.add_argument("--gen_reward_min", default=-8, type=float)
+parser.add_argument("--gen_reward_exp", default=2, type=float)
+parser.add_argument("--gen_reward_min", default=0, type=float)
 parser.add_argument("--gen_L2", default=0, type=float)
 parser.add_argument("--gen_partition_init", default=50, type=float)
 
 # Soft-QLearning/GFlownet gen
-parser.add_argument("--gen_reward_exp_ramping", default=1, type=float)
+parser.add_argument("--gen_reward_exp_ramping", default=3, type=float)
 parser.add_argument("--gen_balanced_loss", default=1, type=float)
 parser.add_argument("--gen_output_coef", default=10, type=float)
 parser.add_argument("--gen_loss_eps", default=1e-5, type=float)
 parser.add_argument("--gen_random_action_prob", default=0.001, type=float)
-parser.add_argument("--gen_sampling_temperature", default=1., type=float)
+parser.add_argument("--gen_sampling_temperature", default=2., type=float)
 parser.add_argument("--gen_leaf_coef", default=25, type=float)
 parser.add_argument("--gen_data_sample_per_step", default=16, type=int)
 # PG gen
@@ -89,19 +90,20 @@ parser.add_argument("--gen_do_explicit_Z", default=0, type=int)
 parser.add_argument("--gen_model_type", default="mlp")
 
 # Proxy
-parser.add_argument("--proxy_learning_rate", default=1e-4)
+parser.add_argument("--proxy_learning_rate", default=1e-4, type=float)
 parser.add_argument("--proxy_type", default="regression")
 parser.add_argument("--proxy_arch", default="mlp")
-parser.add_argument("--proxy_num_layers", default=4)
-parser.add_argument("--proxy_dropout", default=0.1)
+parser.add_argument("--proxy_num_layers", default=4, type=int)
+parser.add_argument("--proxy_dropout", default=0.1, type=float)
 
 parser.add_argument("--proxy_num_hid", default=64, type=int)
 parser.add_argument("--proxy_L2", default=1e-4, type=float)
 parser.add_argument("--proxy_num_per_minibatch", default=256, type=int)
 parser.add_argument("--proxy_early_stop_tol", default=5, type=int)
 parser.add_argument("--proxy_early_stop_to_best_params", default=0, type=int)
-parser.add_argument("--proxy_num_iterations", default=30000, type=int)
+parser.add_argument("--proxy_num_iterations", default=3000, type=int)
 parser.add_argument("--proxy_num_dropout_samples", default=25, type=int)
+parser.add_argument("--proxy_pos_ratio", default=0.9, type=float)
 
 
 class MbStack:
@@ -116,7 +118,7 @@ class MbStack:
         if not len(self.stack):
             return []
         with torch.no_grad():
-            ys = self.f([i[0] for i in self.stack])
+            ys = self.f([i[0] for i in self.stack]) # eos_tok == 2 in gfp
         idxs = [i[1] for i in self.stack]
         self.stack = []
         return zip(ys, idxs)
@@ -134,17 +136,14 @@ def filter_len(x, y, max_len):
 class RolloutWorker:
     def __init__(self, args, oracle, tokenizer):
         self.oracle = oracle
-        self.max_len = args.max_len
-        self.max_len = args.gen_max_len - 2
+        self.max_len = args.max_len  # Why two assignments?
+        self.max_len = args.gen_max_len
         self.episodes_per_step = args.gen_episodes_per_step
         self.random_action_prob = args.gen_random_action_prob
-        self.reward_exp = args.gen_reward_exp`
+        self.reward_exp = args.gen_reward_exp
         self.sampling_temperature = args.gen_sampling_temperature
-        self.eos_tok = -1
         self.out_coef = args.gen_output_coef
 
-        self.eos_char = tokenizer.eos_token
-        self.pad_tok = 22
         self.balanced_loss = args.gen_balanced_loss == 1
         self.reward_norm = args.gen_reward_norm
         self.reward_min = torch.tensor(float(args.gen_reward_min))
@@ -160,25 +159,39 @@ class RolloutWorker:
         self.device = args.device
         self.args = args
         self.workers = MbStack(oracle)
+        if args.task == 'amp':
+            self.max_len = args.gen_max_len - 2
+            self.eos_tok = -1
+            self.eos_char = tokenizer.eos_token
+            self.pad_tok = 22
 
     def rollout(self, model, episodes, use_rand_policy=True):
         visited = []
         lists = lambda n: [list() for i in range(n)]
-        states = [''] * episodes
-        traj_states = [[''] for i in range(episodes)]
+        states = [[] for i in range(episodes)]
+        traj_states = [[[]] for i in range(episodes)]
+        if self.args.task == 'amp':
+            states = [''] * episodes
+            traj_states = [[''] for i in range(episodes)]
         traj_actions = lists(episodes)
         traj_rewards = lists(episodes)
         traj_dones = lists(episodes)
 
         for t in (range(self.max_len) if episodes > 0 else []):
-            active_indices = np.int32([i for i in range(episodes)
-                                       if not states[i].endswith(self.eos_char)])
-            x = self.tokenizer.process([states[i] for i in active_indices]).to(self.device)
-            lens = torch.tensor([len(i) for i in states
-                                if not i.endswith(self.eos_char)]).long().to(self.device)
+            x = self.tokenizer.process(states).to(self.device)
+            if self.args.task == 'amp':
+                active_indices = np.int32([i for i in range(episodes) if not states[i].endswith(self.eos_char)])
+                x = self.tokenizer.process([states[i] for i in active_indices]).to(self.device)
+                lens = torch.tensor([len(i) for i in states if not i.endswith(self.eos_char)]).long().to(self.device)
+            lens = torch.tensor([len(i) for i in states]).long().to(self.device)
             with torch.no_grad():
-                
-                logits = model(x, lens, coef=self.out_coef, pad=self.pad_tok)
+                if self.args.gen_model_type == "transformer":
+                    logits = model(x, lens, coef=self.out_coef)
+                else:
+                    if self.args.task == 'amp':
+                        logits = model(x, lens, coef=self.out_coef, pad=self.pad_tok)
+                    else:
+                        logits = model(x, None, coef=self.out_coef)
             if t == 0:
                 logits[:, 0] = -1000 # Prevent model from stopping
                                      # without having output anything
@@ -189,30 +202,45 @@ class RolloutWorker:
                 print(x)
                 print(logits)
                 print(list(model.model.parameters()))
-                import pdb; pdb.set_trace()
             actions = cat.sample()
             if use_rand_policy and self.random_action_prob > 0:
                 for i in range(actions.shape[0]):
                     if np.random.uniform(0,1) < self.random_action_prob:
                         actions[i] = torch.tensor(np.random.randint(t == 0, logits.shape[1])).to(self.device)
-            chars = [self.tokenizer.vocab.itos[i.item()] for i in actions]
-            
-            # Append predicted characters for active trajectories
-            for i, c, a in zip(active_indices, chars, actions):
-                if c == self.eos_char or t == self.max_len - 1:
-                    self.workers.push(states[i] + (c if c != self.eos_char else ''), i)
-                    r = 0
-                    d = 1
-                else:
-                    r = 0
-                    d = 0
-                traj_states[i].append(states[i] + c)
-                traj_actions[i].append(a)
-                traj_rewards[i].append(r)
-                traj_dones[i].append(d)
-                states[i] += c
-            if all(i.endswith(self.eos_char) for i in states):
-                break
+            if self.args.task == 'amp':
+                chars = [self.tokenizer.vocab.itos[i.item()] for i in actions]
+
+                for i, c, a in zip(active_indices, chars, actions):
+                    if c == self.eos_char or t == self.max_len - 1:
+                        self.workers.push(states[i] + (c if c != self.eos_char else ''), i)
+                        r = 0
+                        d = 1
+                    else:
+                        r = 0
+                        d = 0
+                    traj_states[i].append(states[i] + c)
+                    traj_actions[i].append(a)
+                    traj_rewards[i].append(r)
+                    traj_dones[i].append(d)
+                    states[i] += c
+                if all(i.endswith(self.eos_char) for i in states):
+                    break
+
+            else:
+                # Append predicted characters for active trajectories
+                for i, a in enumerate(actions):
+                    if t == self.max_len - 1:
+                        self.workers.push(states[i] + [a.item()], i)
+                        r = 0
+                        d = 1
+                    else:
+                        r = 0
+                        d = 0
+                    traj_states[i].append(states[i] + [a.item()])
+                    traj_actions[i].append(a)
+                    traj_rewards[i].append(r)
+                    traj_dones[i].append(d)
+                    states[i] += [a.item()]
         return visited, states, traj_states, traj_actions, traj_rewards, traj_dones
 
     def execute_train_episode_batch(self, model, it=0, dataset=None, use_rand_policy=True):
@@ -227,31 +255,47 @@ class RolloutWorker:
             traj_rewards[mbidx][-1] = self.l2r(r, it)
             rq.append(r.item())
             s = states[mbidx]
-            s = s + (self.eos_char if not s.endswith(self.eos_char) else '')
+            if self.args.task == 'amp':
+                s = s + (self.eos_char if not s.endswith(self.eos_char) else '')
             visited.append((s, traj_rewards[mbidx][-1].item(), r.item()))
             bulk_trajs.append((s, traj_rewards[mbidx][-1].item()))
         if args.gen_data_sample_per_step > 0 and dataset is not None:
             n = args.gen_data_sample_per_step
             m = len(traj_states)
-            if self.args.proxy_type == "classification":
-                x, y = dataset.sample(n, 0.5)
-            elif self.args.proxy_type == "regression":
-                x, y = dataset.sample(n)
-            x, y = filter_len(x, y, self.max_len)
+            if self.args.task == 'amp':
+                if self.args.proxy_type == "classification":
+                    x, y = dataset.sample(n, 0.5)
+                elif self.args.proxy_type == "regression":
+                    x, y = dataset.sample(n)
+                x, y = filter_len(x, y, self.max_len)
+            else:
+                x, y = dataset.sample(n)  #sample(n, 0.5)
             n = len(x)
             traj_states += lists(n)
             traj_actions += lists(n)
             traj_rewards += lists(n)
             traj_dones += lists(n)
-            bulk_trajs += list(zip([i+self.eos_char for i in x],
-                                   [self.l2r(torch.tensor(i), it) for i in y]))
-            for i in range(len(x)):
-                traj_states[i+m].append('')
-                for c, a in zip(x[i] + self.eos_char, self.tokenizer.process([x[i] + self.eos_char])[0]-2):
-                    traj_states[i+m].append(traj_states[i+m][-1] + c)
-                    traj_actions[i+m].append(a)
-                    traj_rewards[i+m].append(0 if c != self.eos_char else self.l2r(y[i], it))
-                    traj_dones[i+m].append(float(c == self.eos_char))
+            if self.args.task == 'amp':
+                bulk_trajs += list(zip([i + self.eos_char for i in x],
+                                       [self.l2r(torch.tensor(i), it) for i in y]))
+
+                for i in range(len(x)):
+                    traj_states[i + m].append('')
+                    for c, a in zip(x[i] + self.eos_char, self.tokenizer.process([x[i] + self.eos_char])[0] - 2):
+                        traj_states[i + m].append(traj_states[i + m][-1] + c)
+                        traj_actions[i + m].append(a)
+                        traj_rewards[i + m].append(0 if c != self.eos_char else self.l2r(y[i], it))
+                        traj_dones[i + m].append(float(c == self.eos_char))
+            else:
+                bulk_trajs += list(zip([i for i in x],
+                                       [self.l2r(torch.tensor(i), it) for i in y]))
+                for i in range(len(x)):
+                    traj_states[i+m].append([])
+                    for c, a in zip(x[i], self.tokenizer.process([x[i]]).reshape(-1)):
+                        traj_states[i+m].append(traj_states[i+m][-1] + [c])
+                        traj_actions[i+m].append(a)
+                        traj_rewards[i+m].append(0 if len(traj_actions[i+m]) != self.max_len else self.l2r(torch.tensor(y[i]), it))
+                        traj_dones[i+m].append(float(len(traj_rewards[i+m]) == self.max_len))
         return {
             "visited": visited,
             "trajectories": {
@@ -278,8 +322,12 @@ def train_generator(args, generator, oracle, tokenizer, dataset):
         for key, val in loss_info.items():
             args.logger.add_scalar(f"generator_{key}", val.item())
         if it % 100 == 0:
-            rs = torch.tensor([i[-1] for i in rollout_artifacts["trajectories"]["traj_rewards"]]).mean()
-            args.logger.add_scalar("gen_reward", rs.item())
+            if args.task == 'amp':
+                rs = torch.tensor([i[-1] for i in rollout_artifacts["trajectories"]["traj_rewards"]]).mean()
+                args.logger.add_scalar("gen_reward", rs.item())
+            else:
+                rs = torch.tensor([i[-1] for i in rollout_artifacts["trajectories"]["traj_rewards"]]).mean().item()
+                args.logger.add_scalar("gen_reward", rs)
         if it % 5000 == 0:
             args.logger.save(args.save_path, args)
     return rollout_worker, None
@@ -302,22 +350,34 @@ def sample_batch(args, rollout_worker, generator, current_dataset, oracle):
     print("Generating samples")
     samples = ([], [])
     scores = []
-    while len(samples[0]) < args.num_sampled_per_round * 5:
-        rollout_artifacts = rollout_worker.execute_train_episode_batch(generator, it=0, use_rand_policy = False)
+    while len(samples[0]) < args.num_sampled_per_round * args.num_round:
+        rollout_artifacts = rollout_worker.execute_train_episode_batch(generator, it=0, use_rand_policy=False)
         states = rollout_artifacts["trajectories"]["states"]
-        if args.filter:
-            if args.proxy_type == "classification":
-                states = filter_samples(args, states, current_dataset.pos_train)
-                states = filter_samples(args, states, current_dataset.pos_valid)
-            else:
-                states = filter_samples(args, states, current_dataset.train)
-                states = filter_samples(args, states, current_dataset.valid)
-            states = filter_samples(args, states, samples[0])
-        samples[0].extend(states)
-        scores.extend([rews[-1].cpu().item() for rews in rollout_artifacts["trajectories"]["traj_rewards"]])
+        if args.task == 'amp':
+            if args.filter:
+                if args.proxy_type == "classification":
+                    states = filter_samples(args, states, current_dataset.pos_train)
+                    states = filter_samples(args, states, current_dataset.pos_valid)
+                else:
+                    states = filter_samples(args, states, current_dataset.train)
+                    states = filter_samples(args, states, current_dataset.valid)
+                states = filter_samples(args, states, samples[0])
+
+            samples[0].extend(states)
+            scores.extend([rews[-1].cpu().item() for rews in rollout_artifacts["trajectories"]["traj_rewards"]])
+        else:
+            vals = oracle(states).reshape(-1)
+            samples[0].extend(states)
+            samples[1].extend(vals)
+            scores.extend(torch.tensor(rollout_artifacts["trajectories"]["traj_rewards"])[:, -1].numpy().tolist())
+
     idx_pick = np.argsort(scores)[::-1][:args.num_sampled_per_round]
+
     picked_states = np.array(samples[0])[idx_pick].tolist()
-    return (picked_states, np.array(oracle(picked_states)).tolist())
+    if args.task == 'amp':
+        return picked_states, np.array(oracle(picked_states)).tolist()
+    else:
+        return picked_states, np.array(samples[1])[idx_pick].tolist()
 
 
 def construct_proxy(args, tokenizer, dataset=None):
@@ -340,31 +400,56 @@ def mean_pairwise_distances(args, seqs):
 
 
 def log_overall_metrics(args, dataset, collected=False):
-    top100 = dataset.top_k(100)
-    top1000 = dataset.top_k(1000)
-    args.logger.add_scalar("top-100-scores", np.mean(top100[1]), use_context=False)
-    args.logger.add_scalar("top-1000-scores", np.mean(top1000[1]), use_context=False)
+    if args.task == 'amp':
+        top100 = dataset.top_k(100)
+        top1000 = dataset.top_k(1000)
+        args.logger.add_scalar("top-100-scores", np.mean(top100[1]), use_context=False)
+        args.logger.add_scalar("top-1000-scores", np.mean(top1000[1]), use_context=False)
+    else:
+        top100 = dataset.top_k(128)
+        args.logger.add_scalar("top-128-scores", np.mean(top100[1]), use_context=False)
+
     dist100 = mean_pairwise_distances(args, top100[0])
-    dist1000 = mean_pairwise_distances(args, top1000[0])
-    args.logger.add_scalar("top-100-dists", dist100, use_context=False)
-    args.logger.add_scalar("top-1000-dists", dist1000, use_context=False)
-    args.logger.add_object("top-100-seqs", top100[0])
-    args.logger.add_object("top-1000-seqs", top1000[0])
-    print("Scores, 100, 1000", np.mean(top100[1]), np.mean(top1000[1]))
-    print("Dist, 100, 1000", dist100, dist1000)
-    if collected:
-        top100 = dataset.top_k_collected(100)
-        top1000 = dataset.top_k_collected(1000)
-        args.logger.add_scalar("top-100-collected-scores", np.mean(top100[1]), use_context=False)
-        args.logger.add_scalar("top-1000-collected-scores", np.mean(top1000[1]), use_context=False)
-        dist100 = mean_pairwise_distances(args, top100[0])
+    if args.task == 'amp':
         dist1000 = mean_pairwise_distances(args, top1000[0])
-        args.logger.add_scalar("top-100-collected-dists", dist100, use_context=False)
-        args.logger.add_scalar("top-1000-collected-dists", dist1000, use_context=False)
-        args.logger.add_object("top-100-collected-seqs", top100[0])
-        args.logger.add_object("top-1000-collected-seqs", top1000[0])
-        print("Collected Scores, 100, 1000", np.mean(top100[1]), np.mean(top1000[1]))
-        print("Collected Dist, 100, 1000", dist100, dist1000)
+        args.logger.add_scalar("top-100-dists", dist100, use_context=False)
+        args.logger.add_scalar("top-1000-dists", dist1000, use_context=False)
+        args.logger.add_object("top-100-seqs", top100[0])
+        args.logger.add_object("top-1000-seqs", top1000[0])
+        print("Scores, 100, 1000", np.mean(top100[1]), np.mean(top1000[1]))
+        print("Dist, 100, 1000", dist100, dist1000)
+    else:
+        args.logger.add_scalar("top-128-dists", dist100, use_context=False)
+        args.logger.add_object("top-128-seqs", top100[0])
+        print("Scores, 128", np.mean(top100[1]))
+        print("Dist, 128", dist100)
+    if collected:
+        if args.task == 'amp':
+            top100 = dataset.top_k_collected(100)
+            top1000 = dataset.top_k_collected(1000)
+            args.logger.add_scalar("top-100-collected-scores", np.mean(top100[1]), use_context=False)
+            args.logger.add_scalar("top-1000-collected-scores", np.mean(top1000[1]), use_context=False)
+
+            dist100 = mean_pairwise_distances(args, top100[0])
+
+            dist1000 = mean_pairwise_distances(args, top1000[0])
+            args.logger.add_scalar("top-100-collected-dists", dist100, use_context=False)
+            args.logger.add_scalar("top-1000-collected-dists", dist1000, use_context=False)
+            args.logger.add_object("top-100-collected-seqs", top100[0])
+            args.logger.add_object("top-1000-collected-seqs", top1000[0])
+            print("Collected Scores, 100, 1000", np.mean(top100[1]), np.mean(top1000[1]))
+            print("Collected Dist, 100, 1000", dist100, dist1000)
+        else:
+            top100 = dataset.top_k_collected(128)
+            args.logger.add_scalar("top-128-collected-scores", np.mean(top100[1]), use_context=False)
+            args.logger.add_scalar("max-128-collected-scores", np.max(top100[1]), use_context=False)
+
+            dist100 = mean_pairwise_distances(args, top100[0])
+
+            args.logger.add_scalar("top-128-collected-dists", dist100, use_context=False)
+            args.logger.add_object("top-128-collected-seqs", top100[0])
+            print("Collected Scores, 128, max, 50 pl", np.mean(top100[1]), np.max(top100[1]), np.percentile(top100[1], 50))
+            print("Collected Dist, 128", dist100)
 
 
 def train(args, oracle, dataset):
@@ -382,16 +467,20 @@ def train(args, oracle, dataset):
         args.logger.add_object("collected_seqs_scores", batch[1])
         dataset.add(batch)
         log_overall_metrics(args, dataset, collected=True)
-        proxy.update(dataset)
+        if args.task == 'amp' or round != args.num_rounds - 1:
+            proxy.update(dataset)
         args.logger.save(args.save_path, args)
 
 
 def main(args):
+    save_dir = os.path.dirname(args.save_path)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     args.logger = get_logger(args)
-    args.device = torch.device('cuda')
-    oracle = get_oracle(args)
+    oracle = get_oracle(task=args.task, device=args.device)
     dataset = get_dataset(args, oracle)
 
     train(args, oracle, dataset)

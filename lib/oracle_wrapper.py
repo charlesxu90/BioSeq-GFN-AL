@@ -4,23 +4,23 @@ from clamp_common_eval.defaults import get_test_oracle
 import design_bench
 
 
-def get_oracle(args):
-    if args.task == "amp":
-        return AMPOracleWrapper(args)
-    elif args.task == "gfp":
-        return GFPWrapper(args)
-    elif args.task == "tfbind":
-        return TFBind8Wrapper(args)
+def get_oracle(task="tfbind", device="cpu"):
+    if task == "amp":
+        return AMPOracleWrapper(device=device)
+    elif task == "gfp":
+        return GFPWrapper()
+    elif task == "tfbind":
+        return TFBind8Wrapper()
 
 
 class AMPOracleWrapper:
-    def __init__(self, args):
-        self.oracle = get_test_oracle(args.oracle_split, 
-                                        model=args.oracle_type, 
-                                        feature=args.oracle_features, 
+    def __init__(self, device='cpu', oracle_split="D2_target", oracle_type="MLP", oracle_features="AlBert", medoid_oracle_norm=1):
+        self.oracle = get_test_oracle(oracle_split,
+                                        model=oracle_type,
+                                        feature=oracle_features,
                                         dist_fn="edit", 
-                                        norm_constant=args.medoid_oracle_norm)
-        self.oracle.to(args.device)
+                                        norm_constant=medoid_oracle_norm)
+        self.oracle.to(device)
 
     def __call__(self, x, batch_size=256):
         scores = []
@@ -34,7 +34,7 @@ class AMPOracleWrapper:
 
 
 class GFPWrapper:
-    def __init__(self, args):
+    def __init__(self):
         self.task = design_bench.make('GFP-Transformer-v0')
 
     def __call__(self, x, batch_size=256):
@@ -45,7 +45,7 @@ class GFPWrapper:
         return np.float32(scores)
 
 class TFBind8Wrapper:
-    def __init__(self, args):
+    def __init__(self):
         self.task = design_bench.make('TFBind8-Exact-v0')
 
     def __call__(self, x, batch_size=256):
