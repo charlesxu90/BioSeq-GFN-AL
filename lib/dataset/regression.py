@@ -9,12 +9,16 @@ from lib.dataset.base import Dataset
 
 
 class AMPRegressionDataset(Dataset):
-    def __init__(self, split, nfold, args, oracle):
-        super().__init__(args, oracle)
+    def __init__(self, oracle, nfold=5, split="D1", save_scores=False, save_scores_path=".", load_scores_path="."):
+        super().__init__(oracle)
         self._load_dataset(split, nfold)
         self._compute_scores(split)
         self.train_added = len(self.train)
         self.val_added = len(self.valid)
+        self.save_scores = save_scores
+        self.save_scores_path = save_scores_path
+        self.load_scores_path = load_scores_path
+
 
     def _load_dataset(self, split, nfold):
         source = get_default_data_splits(setting='Target')
@@ -42,16 +46,16 @@ class AMPRegressionDataset(Dataset):
             return
         self.train_scores = self.oracle(self.train)
         self.valid_scores = self.oracle(self.valid)
-        if self.args.save_scores:
-            np.save(osp.join(self.args.save_scores_path, "reg" + split+"train_scores.npy") , self.train_scores)
-            np.save(osp.join(self.args.save_scores_path, "reg" + split+"val_scores.npy"), self.valid_scores)
+        if self.save_scores:
+            np.save(osp.join(self.save_scores_path, "reg" + split+"train_scores.npy") , self.train_scores)
+            np.save(osp.join(self.save_scores_path, "reg" + split+"val_scores.npy"), self.valid_scores)
 
 
     def _load_precomputed_scores(self, split):
-        if osp.exists(osp.join(self.args.load_scores_path)):
+        if osp.exists(osp.join(self.load_scores_path)):
             try: 
-                self.train_scores = np.load(osp.join(self.args.load_scores_path, "reg" + split+"train_scores.npy"))
-                self.valid_scores = np.load(osp.join(self.args.load_scores_path, "reg" + split+"val_scores.npy"))
+                self.train_scores = np.load(osp.join(self.load_scores_path, "reg" + split+"train_scores.npy"))
+                self.valid_scores = np.load(osp.join(self.load_scores_path, "reg" + split+"val_scores.npy"))
             except:
                 return False
             return True
@@ -59,8 +63,8 @@ class AMPRegressionDataset(Dataset):
             return False
 
 
-    def sample(self, n):
-        indices = np.random.randint(0, len(self.train), n)
+    def sample(self, num_samples):
+        indices = np.random.randint(0, len(self.train), num_samples)
         return ([self.train[i] for i in indices],
                 [self.train_scores[i] for i in indices])
 
@@ -99,8 +103,8 @@ class AMPRegressionDataset(Dataset):
 
 
 class TFBind8Dataset(Dataset):
-    def __init__(self, args, oracle):
-        super().__init__(args, oracle)
+    def __init__(self, oracle):
+        super().__init__(oracle)
         self._load_dataset()
         self.train_added = len(self.train)
         self.val_added = len(self.valid)
@@ -111,8 +115,8 @@ class TFBind8Dataset(Dataset):
         y = task.y.reshape(-1)
         self.train, self.valid, self.train_scores, self.valid_scores  = train_test_split(x, y, test_size=0.1, random_state=self.rng)
 
-    def sample(self, n):
-        indices = np.random.randint(0, len(self.train), n)
+    def sample(self, num_samples):
+        indices = np.random.randint(0, len(self.train), num_samples)
         return ([self.train[i] for i in indices],
                 [self.train_scores[i] for i in indices])
 
@@ -156,8 +160,8 @@ class TFBind8Dataset(Dataset):
 
 
 class GFPDataset(Dataset):
-    def __init__(self, args, oracle):
-        super().__init__(args, oracle)
+    def __init__(self, oracle):
+        super().__init__(oracle)
         self._load_dataset()
         self.train_added = len(self.train)
         self.val_added = len(self.valid)
@@ -169,8 +173,8 @@ class GFPDataset(Dataset):
         y = task.y.reshape(-1) 
         self.train, self.valid, self.train_scores, self.valid_scores  = train_test_split(x, y, test_size=0.2, random_state=self.rng)
 
-    def sample(self, n):
-        indices = np.random.randint(0, len(self.train), n)
+    def sample(self, num_samples):
+        indices = np.random.randint(0, len(self.train), num_samples)
         return ([self.train[i] for i in indices],
                 [self.train_scores[i] for i in indices])
 

@@ -25,21 +25,23 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--save_path", default='results/test_mlp.pkl.gz')
 parser.add_argument("--tb_log_dir", default='results/test_mlp')
 parser.add_argument("--name", default='test_mlp')
-parser.add_argument("--load_scores_path", default='.')
 parser.add_argument("--device", default='cuda:0')
 
 # Multi-round
 parser.add_argument("--num_rounds", default=1, type=int)
 parser.add_argument("--task", default="tfbind", type=str)
 parser.add_argument("--num_sampled_per_round", default=128, type=int)
-parser.add_argument("--num_folds", default=5, type=int)  # same to num_round?
 parser.add_argument("--num_round", default=100, type=int)  # difference between num_rounds & num_round
 parser.add_argument("--vocab_size", default=4, type=int)
 parser.add_argument("--max_len", default=8, type=int)
 parser.add_argument("--gen_max_len", default=8, type=int)
 parser.add_argument("--proxy_uncertainty", default="dropout")
-parser.add_argument("--save_scores_path", default=".")
-parser.add_argument("--save_scores", action="store_true")
+
+# Dataset params
+# parser.add_argument("--save_scores_path", default=".")
+# parser.add_argument("--save_scores", action="store_true")
+# parser.add_argument("--load_scores_path", default='.')
+
 parser.add_argument("--seed", default=0, type=int)
 parser.add_argument("--run", default=-1, type=int)
 parser.add_argument("--noise_params", action="store_true")
@@ -54,7 +56,8 @@ parser.add_argument("--max_percentile", default=80, type=int)
 parser.add_argument("--filter_threshold", default=0.1, type=float)
 parser.add_argument("--filter_distance_type", default="edit", type=str)
 # Proxy params
-parser.add_argument("--proxy_data_split", default="D1", type=str)
+# parser.add_argument("--proxy_data_split", default="D1", type=str)
+# parser.add_argument("--num_folds", default=5, type=int)  # same to num_round?
 
 parser.add_argument("--medoid_oracle_dist", default="edit", type=str)
 parser.add_argument("--medoid_oracle_exp_constant", default=6, type=int)
@@ -481,7 +484,7 @@ def main(args):
     np.random.seed(args.seed)
     args.logger = get_logger(args)
     oracle = get_oracle(task=args.task, device=args.device)
-    dataset = get_dataset(args, oracle)
+    dataset = get_dataset(task=args.task, oracle=oracle)
 
     train(args, oracle, dataset)
 
