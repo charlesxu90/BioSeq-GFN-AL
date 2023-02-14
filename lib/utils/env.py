@@ -16,10 +16,13 @@ class TokenizerWrapper:
         self.eos_token = '%'
     
     def process(self, x):
+        """
+            Tokenize x if AMP task, for GFP and TF-Bind, not need for tokenizing, only checking & padding.
+        """
         lens = [len(x[i]) for i in range(len(x))]
-        if self.dummy_process:
+        if self.dummy_process:  # GFP, TF-bind
             max_len = max(lens)
-            if max_len != sum(lens) / len(lens):
+            if max_len != sum(lens) / len(lens): # pad x if length less than max_len: pad_tok = len(self.stoi.keys())
                 for i in range(len(x)):
                     if len(x[i]) == max_len:
                         pass
@@ -27,13 +30,13 @@ class TokenizerWrapper:
                         x[i] = x[i] + [len(self.stoi.keys())] * (max_len - len(x[i]))
                     except:
                         import pdb; pdb.set_trace();
-        else:
+        else:  # AMP
             ret_val = []
             max_len = max(lens)
             for i in range(len(x)):
                 # process
-                temp = [self.stoi[ch] for ch in x[i]]
-                if max_len != sum(lens) / len(lens):
+                temp = [self.stoi[ch] for ch in x[i]] # char to index
+                if max_len != sum(lens) / len(lens):  # pad x if length less than max_len: pad_tok = len(self.stoi.keys())
                     if len(temp) == max_len:
                         pass
                     try:
@@ -57,7 +60,7 @@ class TokenizerWrapper:
 def get_tokenizer(task):
     if task == "amp":
         alphabet = ['%', 'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
-        # %: EOS
+        # %: EOS -1, PAD 22
     elif task == "tfbind":
         alphabet = ['A', 'C', 'T', 'G']
     elif task == "gfp":

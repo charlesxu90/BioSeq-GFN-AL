@@ -2,11 +2,10 @@ import argparse
 import os
 import numpy as np
 import torch
-import torch.nn as nn
 from tqdm import tqdm
 
+from lib.dataset import RegressionDataset
 from lib.acquisition_fn import get_acq_fn
-from lib.dataset import get_dataset
 from lib.generator import get_generator
 from lib.logging import get_logger
 from lib.oracle_wrapper import get_oracle
@@ -28,7 +27,7 @@ parser.add_argument("--enable_tensorboard", action="store_true")
 parser.add_argument("--task", default="tfbind", type=str)
 parser.add_argument("--vocab_size", default=4, type=int)
 parser.add_argument("--max_len", default=8, type=int)
-# parser.add_argument("--gen_max_len", default=8, type=int)   # why two max_len here?
+parser.add_argument("--nfold", default=10, type=int)
 
 # Proxy params
 parser.add_argument("--save_path", default='results/tfbind')
@@ -155,7 +154,8 @@ def main(args):
     print(f"task: {args.task}, device: {args.device}")
 
     oracle = get_oracle(task=args.task, device=args.device)
-    dataset = get_dataset(task=args.task, oracle=oracle)
+    dataset = RegressionDataset(oracle, task=args.task, save_dir=save_dir, nfold=args.nfold)
+    #task=args.task, oracle=oracle)
 
     train(args.task, oracle, dataset, logger, args.save_path,
           vocab_size=args.vocab_size, max_len=args.max_len, device=args.device,

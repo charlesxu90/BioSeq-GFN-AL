@@ -1,21 +1,7 @@
-import argparse
-import os
-import itertools
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.distributions import Categorical
-from tqdm import tqdm
-
-from lib.acquisition_fn import get_acq_fn
-from lib.dataset import get_dataset
-from lib.generator import get_generator
-from lib.logging import get_logger
-from lib.oracle_wrapper import get_oracle
-from lib.proxy import get_proxy_model
-from lib.utils.distance import is_similar, edit_dist
-from lib.utils.env import get_tokenizer
-
+from lib.utils.distance import is_similar
 
 class MbStack:
     """
