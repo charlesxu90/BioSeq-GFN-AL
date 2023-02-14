@@ -2,9 +2,8 @@ import torch
 import torch.nn as nn
 
 class GeneratorBase(nn.Module):
-    def __init__(self, args):
+    def __init__(self):
         super().__init__()
-        self.args = args
 
     def train_step(self):
         raise NotImplementedError()

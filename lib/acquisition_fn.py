@@ -4,17 +4,17 @@ import numpy as np
 from torch.distributions import Normal
 
 
-def get_acq_fn(args):
-    if args.acq_fn.lower() == "ucb":
+def get_acq_fn(acq_fn='none'):
+    if acq_fn.lower() == "ucb":
         return UCB
-    elif args.acq_fn.lower() == "ei":
+    elif acq_fn.lower() == "ei":
         return EI
     else:
         return NoAF
 
 
 class AcquisitionFunctionWrapper():
-    def __init__(self, args, model, l2r, dataset):
+    def __init__(self, model, l2r, dataset, device):
         self.model = model
         self.l2r = l2r
 
@@ -32,28 +32,30 @@ class NoAF(AcquisitionFunctionWrapper):
         return self.l2r(self.model(x))
 
 class UCB(AcquisitionFunctionWrapper):
-    def __init__(self, args, model, l2r, dataset):
-        super().__init__(args, model, l2r, dataset)
-        self.kappa = args.kappa
+    def __init__(self, model, l2r, dataset, device='cpu', kappa=0.1):
+        super().__init__(model, l2r, dataset, device)
+        self.kappa = kappa
+        self.model.to(device)
     
     def __call__(self, x):
         mean, std = self.model.forward_with_uncertainty(x)
         return self.l2r(mean + self.kappa * std)
 
 class EI(AcquisitionFunctionWrapper):
-    def __init__(self, args, model, l2r, dataset):
-        super().__init__(args, model, l2r, dataset)
-        self.args = args
-        self.device = args.device
+    def __init__(self, model, l2r, dataset, device='cpu', proxy_type="regression", max_percentile=80):
+        super().__init__(model, l2r, dataset, device)
+        self.device = device
         self.sigmoid = nn.Sigmoid()
+        self.proxy_type = proxy_type
+        self.max_percentile = max_percentile
 
     def _get_best_f(self, dataset):
         f_values = []
-        data_it = dataset.pos_train if self.args.proxy_type == "classification" else dataset.train
+        data_it = dataset.pos_train if self.proxy_type == "classification" else dataset.train
         for sample in data_it:
             outputs = self.model([sample])
             f_values.append(outputs.item())
-        return torch.tensor(np.percentile(f_values, self.args.max_percentile))
+        return torch.tensor(np.percentile(f_values, self.max_percentile))
 
     def __call__(self, x):
         self.best_f = self.best_f.to(self.device)

@@ -9,16 +9,15 @@ from lib.dataset.base import Dataset
 
 
 class AMPRegressionDataset(Dataset):
-    def __init__(self, oracle, nfold=5, split="D1", save_scores=False, save_scores_path=".", load_scores_path="."):
+    def __init__(self, oracle, nfold=5, split="D1", save_scores=True, save_scores_path=".", load_scores_path="."):
         super().__init__(oracle)
         self._load_dataset(split, nfold)
-        self._compute_scores(split)
-        self.train_added = len(self.train)
-        self.val_added = len(self.valid)
         self.save_scores = save_scores
         self.save_scores_path = save_scores_path
         self.load_scores_path = load_scores_path
-
+        self._compute_scores(split)
+        self.train_added = len(self.train)
+        self.val_added = len(self.valid)
 
     def _load_dataset(self, split, nfold):
         source = get_default_data_splits(setting='Target')
@@ -50,7 +49,6 @@ class AMPRegressionDataset(Dataset):
             np.save(osp.join(self.save_scores_path, "reg" + split+"train_scores.npy") , self.train_scores)
             np.save(osp.join(self.save_scores_path, "reg" + split+"val_scores.npy"), self.valid_scores)
 
-
     def _load_precomputed_scores(self, split):
         if osp.exists(osp.join(self.load_scores_path)):
             try: 
@@ -62,8 +60,10 @@ class AMPRegressionDataset(Dataset):
         else:
             return False
 
-
     def sample(self, num_samples):
+        """
+        Randomly sampling from training dataset
+        """
         indices = np.random.randint(0, len(self.train), num_samples)
         return ([self.train[i] for i in indices],
                 [self.train_scores[i] for i in indices])
@@ -72,6 +72,9 @@ class AMPRegressionDataset(Dataset):
         return self.valid, self.valid_scores
 
     def add(self, batch):
+        """
+        Randomly add the batch to training and validation dataset, with probability of 1/nfold to be validation data
+        """
         samples, scores = batch
         train, val = [], []
         for x, score in zip(samples, scores):

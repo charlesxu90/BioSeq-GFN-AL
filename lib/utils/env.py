@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 class Vocab:
     def __init__(self, alphabet) -> None:
@@ -42,7 +43,7 @@ class TokenizerWrapper:
                 ret_val.append(temp)
             x = ret_val
 
-        return torch.tensor(x, dtype=torch.long)
+        return torch.tensor(np.array(x), dtype=torch.long)
 
     @property
     def itos(self):
@@ -53,15 +54,15 @@ class TokenizerWrapper:
         return self.vocab.stoi
 
 
-def get_tokenizer(args):
-    if args.task == "amp":
+def get_tokenizer(task):
+    if task == "amp":
         alphabet = ['%', 'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
         # %: EOS
-    elif args.task == "tfbind":
+    elif task == "tfbind":
         alphabet = ['A', 'C', 'T', 'G']
-    elif args.task == "gfp":
+    elif task == "gfp":
         alphabet = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
     
     vocab = Vocab(alphabet)
-    tokenizer = TokenizerWrapper(vocab, dummy_process=(args.task != "amp"))
+    tokenizer = TokenizerWrapper(vocab, dummy_process=(task != "amp"))
     return tokenizer

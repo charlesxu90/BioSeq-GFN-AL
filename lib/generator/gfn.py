@@ -8,29 +8,38 @@ LOGINF = 1000
 
 
 class FMGFlowNetGenerator(GeneratorBase):    
-    def __init__(self, args, tokenizer):
-        super().__init__(args)
-        self.leaf_coef = args.gen_leaf_coef
-        self.out_coef = args.gen_output_coef
-        self.loss_eps = torch.tensor(float(args.gen_loss_eps)).to(args.device)
+    def __init__(self, tokenizer, device='cpu',
+                 task='tfbind', vocab_size=4, max_len=8,
+                 gen_do_explicit_Z=0, gen_learning_rate=5e-4,
+                 gen_leaf_coef=25., gen_output_coef=10., gen_loss_eps=1e-5,
+                 gen_balanced_loss=1., gen_num_hidden=128,
+                 gen_model_type="mlp", gen_partition_init=50.,
+                 gen_L2=0., gen_clip=10., ):
+        super().__init__()
+        self.leaf_coef = gen_leaf_coef
+        self.out_coef = gen_output_coef
+        self.loss_eps = torch.tensor(float(gen_loss_eps)).to(device)
         self.pad_tok = 2
-        self.num_tokens = args.vocab_size
-        self.max_len = args.gen_max_len
-        self.balanced_loss = args.gen_balanced_loss == 1
-        if args.gen_model_type == "mlp":
-            self.model = MLP(num_tokens=self.num_tokens, 
+        self.num_tokens = vocab_size
+        self.max_len = max_len
+        self.balanced_loss = gen_balanced_loss == 1
+        self.gen_model_type = gen_model_type
+        if self.gen_model_type == "mlp":
+            self.model = MLP(num_tokens=self.num_tokens,
                             num_outputs=self.num_tokens, 
-                            num_hid=args.gen_num_hidden,
+                            num_hid=gen_num_hidden,
                             num_layers=2,
                             max_len=self.max_len,
                             dropout=0,
-                            partition_init=args.gen_partition_init,
-                            causal=args.gen_do_explicit_Z)
-        self.model.to(args.device)
-        self.opt = torch.optim.Adam(self.model.parameters(), args.gen_learning_rate, weight_decay=args.gen_L2,
+                            partition_init=gen_partition_init,
+                            causal=gen_do_explicit_Z)
+        self.model.to(device)
+        self.opt = torch.optim.Adam(self.model.parameters(), gen_learning_rate, weight_decay=gen_L2,
                             betas=(0.9, 0.999))
-        self.device = args.device
-        self.tokenizer=tokenizer
+        self.device = device
+        self.tokenizer = tokenizer
+        self.gen_clip = gen_clip
+        self.task = task
 
     @property
     def Z(self):
@@ -40,14 +49,14 @@ class FMGFlowNetGenerator(GeneratorBase):
         batch = self.preprocess_state(input_batch)
         loss, info = self.get_loss(batch)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gen_clip)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gen_clip)
         self.opt.step()
         self.opt.zero_grad()
         return loss, info
     
     def preprocess_state(self, input_batch):
         s = self.tokenizer.process(sum(input_batch["traj_states"], [])).to(self.device)
-        if self.args.gen_model_type == "mlp":
+        if self.gen_model_type == "mlp":
             inp_x = F.one_hot(s, num_classes=self.num_tokens+1)[:, :, :-1].to(torch.float32)
             inp = torch.zeros(s.shape[0], self.max_len, self.num_tokens)
             inp[:, :inp_x.shape[1], :] = inp_x
@@ -65,10 +74,10 @@ class FMGFlowNetGenerator(GeneratorBase):
     def get_loss(self, batch):
         s, a, r, d, tidx = batch
         r = torch.nan_to_num(r, nan=0, posinf=0, neginf=0)
-        if self.args.gen_model_type == "mlp":
-            if self.args.task == "tfbind":
+        if self.gen_model_type == "mlp":
+            if self.task == "tfbind":
                 Q = self.model(s, s.gt(3))
-            elif self.args.task == "gfp":
+            elif self.task == "gfp":
                 Q = self.model(s, s.gt(19))
             else:
                 Q = self.model(s, s.gt(20))
@@ -95,7 +104,7 @@ class FMGFlowNetGenerator(GeneratorBase):
         return loss, {"leaf_loss": leaf_loss, "flow_loss": flow_loss}
 
     def forward(self, x, lens, return_all=False, coef=1, pad=2):
-        if self.args.gen_model_type == "mlp":
+        if self.gen_model_type == "mlp":
             inp_x = F.one_hot(x, num_classes=self.num_tokens+1)[:, :, :-1].to(torch.float32)
             inp = torch.zeros(x.shape[0], self.max_len, self.num_tokens)
             inp[:, :inp_x.shape[1], :] = inp_x
@@ -107,15 +116,20 @@ class FMGFlowNetGenerator(GeneratorBase):
 
 
 class TBGFlowNetGenerator(GeneratorBase):
-    def __init__(self, args, tokenizer):
-        super().__init__(args)
-        self.leaf_coef = args.gen_leaf_coef
-        self.out_coef = args.gen_output_coef
-        self.reward_exp_min = args.reward_exp_min
-        self.loss_eps = torch.tensor(float(args.gen_loss_eps)).to(args.device)
+    def __init__(self, tokenizer, reward_exp_min, device='cpu',
+                 task='tfbind', vocab_size=4, max_len=8,
+                 gen_do_explicit_Z=0, gen_learning_rate=5e-4, gen_Z_learning_rate=5e-3,
+                 gen_leaf_coef=25., gen_output_coef=10., gen_loss_eps=1e-5,
+                 gen_model_type="mlp", gen_partition_init=50.,
+                 gen_L2=0., gen_clip=10.,):
+        super().__init__()
+        self.leaf_coef = gen_leaf_coef
+        self.out_coef = gen_output_coef
+        self.reward_exp_min = reward_exp_min
+        self.loss_eps = torch.tensor(float(gen_loss_eps)).to(device)
         self.pad_tok = 1
-        self.num_tokens = args.vocab_size
-        self.max_len = args.gen_max_len
+        self.num_tokens = vocab_size
+        self.max_len = max_len
         self.tokenizer=tokenizer
         self.model = MLP(num_tokens=self.num_tokens, 
                                 num_outputs=self.num_tokens, 
@@ -123,21 +137,24 @@ class TBGFlowNetGenerator(GeneratorBase):
                                 num_layers=2,
                                 max_len=self.max_len,
                                 dropout=0,
-                                partition_init=args.gen_partition_init,
-                                causal=args.gen_do_explicit_Z)
-        self.model.to(args.device)
-        self.opt = torch.optim.Adam(self.model.model_params(), args.gen_learning_rate, weight_decay=args.gen_L2,
+                                partition_init=gen_partition_init,
+                                causal=gen_do_explicit_Z)
+        self.model.to(device)
+        self.opt = torch.optim.Adam(self.model.model_params(), gen_learning_rate, weight_decay=gen_L2,
                             betas=(0.9, 0.999))
-        self.opt_Z = torch.optim.Adam(self.model.Z_param(), args.gen_Z_learning_rate, weight_decay=args.gen_L2,
+        self.opt_Z = torch.optim.Adam(self.model.Z_param(), gen_Z_learning_rate, weight_decay=gen_L2,
                             betas=(0.9, 0.999))
-        self.device = args.device
+        self.device = device
         self.logsoftmax = torch.nn.LogSoftmax(1)
         self.logsoftmax2 = torch.nn.LogSoftmax(2)
+        self.gen_clip = gen_clip
+        self.gen_model_type = gen_model_type
+        self.task = task
 
     def train_step(self, input_batch):
         loss, info = self.get_loss(input_batch)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gen_clip)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gen_clip)
         self.opt.step()
         self.opt_Z.step()
         self.opt.zero_grad()
@@ -154,18 +171,18 @@ class TBGFlowNetGenerator(GeneratorBase):
         s = self.tokenizer.process(strs).to(self.device)
         r = torch.tensor(r).to(self.device).clamp(min=0)
         r = torch.nan_to_num(r, nan=0, posinf=0, neginf=0)
-        if self.args.gen_model_type == 'mlp':
+        if self.gen_model_type == 'mlp':
             inp_x = F.one_hot(s, num_classes=self.num_tokens+1)[:, :, :-1].to(torch.float32)
             inp = torch.zeros(s.shape[0], self.max_len, self.num_tokens)
             inp[:, :inp_x.shape[1], :] = inp_x
             x = inp.reshape(s.shape[0], -1).to(self.device).detach()
-            if self.args.task == "amp":
+            if self.task == "amp":
                 lens = [self.max_len for i in s]
             else:
                 lens = [len(i) for i in strs]
             pol_logits = self.logsoftmax2(self.model(x, None, return_all=True, lens=lens))[:-1]
             
-            if self.args.task == "amp" and s.shape[1] != self.max_len:
+            if self.task == "amp" and s.shape[1] != self.max_len:
                 s = F.pad(s, (0, self.max_len - s.shape[1]), "constant", 21)
                 mask = s.eq(21)
             else:
@@ -182,7 +199,7 @@ class TBGFlowNetGenerator(GeneratorBase):
         return loss, {}
 
     def forward(self, x, lens, return_all=False, coef=1, pad=2):
-        if self.args.gen_model_type == "mlp":
+        if self.gen_model_type == "mlp":
             inp_x = F.one_hot(x, num_classes=self.num_tokens+1)[:, :, :-1].to(torch.float32)
             inp = torch.zeros(x.shape[0], self.max_len, self.num_tokens)
             inp[:, :inp_x.shape[1], :] = inp_x
