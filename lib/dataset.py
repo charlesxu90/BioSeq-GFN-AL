@@ -2,7 +2,7 @@ import numpy as np
 import os.path as osp
 
 import design_bench
-from clamp_common_eval.defaults import get_default_data_splits
+from clamp_common_eval import get_dataset
 from sklearn.model_selection import GroupKFold, train_test_split
 
 class RegressionDataset:
@@ -15,37 +15,35 @@ class RegressionDataset:
         self.train_added = len(self.train)
         self.val_added = len(self.valid)
 
-    def _load_dataset(self, task_name):
-        if task_name == 'amp':
+    def _load_dataset(self, task):
+        if task == 'amp':
             self._load_amp_dataset()
             return
-        elif task_name == 'herceptin':
+        elif task == 'herceptin':
             """
             Initialize herceptin dataset
             """
             return
-        elif task_name == 'gfp':
-            task = design_bench.make('GFP-Transformer-v0')
-            task.map_normalize_y()
-        elif task_name == 'tfbind':
-            task = design_bench.make('TFBind8-Exact-v0')
+        elif task == 'gfp':
+            benchmark = design_bench.make('GFP-Transformer-v0')
+            benchmark.map_normalize_y()
+        elif task == 'tfbind':
+            benchmark = design_bench.make('TFBind8-Exact-v0')
         else:
-            raise Exception(f"task name {task_name} not found!")
+            raise Exception(f"task name {task} not found!")
 
         # Run following for 'gfp' and 'tfbind'
-        x = task.x
-        y = task.y.reshape(-1)
+        x = benchmark.x
+        y = benchmark.y.reshape(-1)
         self.train, self.valid, self.train_scores, self.valid_scores = train_test_split(x, y, test_size=0.2,
                                                                                         random_state=self.rng)
 
     def _load_amp_dataset(self, split="D1", nfold=5):
         """ Initialize AMP dataset """
-        source = get_default_data_splits(setting='Target')
-        self.data = source.sample(split, -1)
+        dataset = get_dataset()
+        self.data = dataset.sample(split, -1)
         self.nfold = nfold
-        if split == "D1": groups = np.array(source.d1_pos.group)
-        if split == "D2": groups = np.array(source.d2_pos.group)
-        if split == "D": groups = np.concatenate((np.array(source.d1_pos.group), np.array(source.d2_pos.group)))
+        groups = np.array(dataset.d1_pos.group)
 
         n_pos, n_neg = len(self.data['AMP']), len(self.data['nonAMP'])
         pos_train, pos_valid = next(GroupKFold(nfold).split(np.arange(n_pos), groups=groups))
@@ -58,23 +56,23 @@ class RegressionDataset:
         neg_valid = [self.data['nonAMP'][i] for i in neg_valid]
         self.train = pos_train + neg_train
         self.valid = pos_valid + neg_valid
-        self._compute_amp_scores(split)
+        self._compute_amp_scores()
 
-    def _compute_amp_scores(self, split):
-        loaded = self._load_amp_precomputed_scores(split)
+    def _compute_amp_scores(self):
+        loaded = self._load_amp_precomputed_scores()
         if loaded:
             return
         self.train_scores = self.oracle(self.train)
         self.valid_scores = self.oracle(self.valid)
         if self.save_dir:
-            np.save(osp.join(self.save_dir, "amp", "reg" + split + "train_scores.npy"), self.train_scores)
-            np.save(osp.join(self.save_dir, "amp", "reg" + split + "val_scores.npy"), self.valid_scores)
+            np.save(osp.join(self.save_dir, "reg_D1_train_scores.npy"), self.train_scores)
+            np.save(osp.join(self.save_dir, "reg_D1_val_scores.npy"), self.valid_scores)
 
-    def _load_amp_precomputed_scores(self, split):
-        if self.save_dir and osp.exists(osp.join(self.save_dir, "amp")):
+    def _load_amp_precomputed_scores(self):
+        if self.save_dir and osp.exists(osp.join(self.save_dir)):
             try:
-                self.train_scores = np.load(osp.join(self.save_dir, "amp", "reg" + split+"train_scores.npy"))
-                self.valid_scores = np.load(osp.join(self.save_dir, "amp", "reg" + split+"val_scores.npy"))
+                self.train_scores = np.load(osp.join(self.save_dir, "reg_D1_train_scores.npy"))
+                self.valid_scores = np.load(osp.join(self.save_dir, "reg_D1_val_scores.npy"))
             except:
                 return False
             return True
