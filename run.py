@@ -4,11 +4,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from lib.oracle_wrapper import OracleWrapper
 from lib.dataset import RegressionDataset
 from lib.acquisition_fn import get_acq_fn
 from lib.generator import get_generator
 from lib.logging import get_logger
-from lib.oracle_wrapper import get_oracle
 from lib.proxy import get_proxy_model
 from lib.utils.env import get_tokenizer
 
@@ -153,7 +153,7 @@ def main(args):
 
     print(f"task: {args.task}, device: {args.device}")
 
-    oracle = get_oracle(task=args.task, device=args.device)
+    oracle = OracleWrapper(task=args.task, device=args.device)
     dataset = RegressionDataset(oracle, task=args.task, save_dir=save_dir, nfold=args.nfold)
     #task=args.task, oracle=oracle)
 
